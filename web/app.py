@@ -15,18 +15,35 @@
 """
 import json
 import os
+import queue
 import sys
+import threading
 import time
 import urllib.request
 import urllib.error
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
 
 app = Flask(__name__, static_folder="static")
 CORS(app)
+
+try:
+    import paho.mqtt.client as mqtt
+except ImportError:
+    mqtt = None
+
+# ---- 实时 MQTT 数据缓存与 SSE 推送 ----
+LIVE_Q = queue.Queue(maxsize=500)          # 后端订阅到的消息流
+LIVE_CACHE = {}                            # 各设备最新属性快照
+LIVE_CLIENTS = 0                           # 当前 SSE 连接数
+LIVE_LAST_PING = time.time()
+
+MQTT_BROKER = ("172.16.4.211", 9783)
+MQTT_USER = "test"
+MQTT_PASS = "123456"
 
 HERE = Path(__file__).parent.resolve()
 MAPPING_FILE = HERE / "static" / "mapping.json"
@@ -128,6 +145,93 @@ def _save(data: dict):
 
 def _resp(ok=True, data=None, msg=""):
     return jsonify({"ok": ok, "data": data, "msg": msg})
+
+
+# ---- 实时数据：后端订阅 MQTT，通过 SSE 推给前端 ----
+def _mqtt_start():
+    if mqtt is None:
+        app.logger.warning("paho-mqtt 未安装，实时数据流不可用")
+        return
+
+    def on_connect(client, userdata, flags, rc, properties=None):
+        if rc == 0:
+            app.logger.info("SSE-MQTT 后端已连接 172.16.4.211:9783")
+            topics = [
+                ("/relay4_lfx/7ce8b1c1a7fc/property/post", 0),
+                ("/relay4_lfx/7ce8b1c1a7fc/properties/report", 0),
+                ("/+/+/properties/report", 0),
+            ]
+            client.subscribe(topics)
+        else:
+            app.logger.warning("SSE-MQTT 连接失败 rc=%s", rc)
+
+    def on_message(client, userdata, msg):
+        try:
+            payload = msg.payload.decode("utf-8", errors="replace")
+            data = json.loads(payload)
+        except Exception:
+            data = payload
+        packet = {
+            "topic": msg.topic,
+            "payload": data,
+            "ts": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        }
+        LIVE_CACHE[msg.topic] = packet
+        try:
+            LIVE_Q.put(packet, block=False)
+        except queue.Full:
+            LIVE_Q.get_nowait()
+            LIVE_Q.put(packet, block=False)
+
+    def loop():
+        client_id = f"web-dash-{int(time.time()*1000)}"
+        # paho 2.x 需要 CallbackAPIVersion
+        try:
+            client = mqtt.Client(client_id=client_id, callback_api_version=mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv311)
+        except Exception:
+            client = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311)
+        client.username_pw_set(MQTT_USER, MQTT_PASS)
+        client.on_connect = on_connect
+        client.on_message = on_message
+        client.reconnect_delay_set(min_delay=1, max_delay=30)
+        while True:
+            try:
+                client.connect(*MQTT_BROKER, keepalive=60)
+                client.loop_forever()
+            except Exception as e:
+                app.logger.warning("SSE-MQTT 后端连接异常：%s，5s 后重连", e)
+                time.sleep(5)
+
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+
+
+@app.route("/api/live")
+def live_stream():
+    """Server-Sent Events：把后端订阅到的 MQTT 消息实时推给前端"""
+    def generate():
+        global LIVE_CLIENTS
+        LIVE_CLIENTS += 1
+        app.logger.info("新增 SSE 客户端，当前 %d 个", LIVE_CLIENTS)
+        # 先发一次当前缓存快照，前端立刻有数据
+        snap = {k: v for k, v in LIVE_CACHE.items()}
+        if snap:
+            yield f"event: snapshot\ndata: {json.dumps(snap, ensure_ascii=False)}\n\n"
+        try:
+            while True:
+                packet = LIVE_Q.get(timeout=20)
+                yield f"data: {json.dumps(packet, ensure_ascii=False)}\n\n"
+        except queue.Empty:
+            # 20 秒无数据发一次心跳，保持连接
+            yield "event: ping\ndata: {}\n\n"
+        finally:
+            LIVE_CLIENTS -= 1
+            app.logger.info("SSE 客户端断开，当前 %d 个", LIVE_CLIENTS)
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
 
 
 # ---- 静态首页 ----
@@ -272,6 +376,7 @@ def load_mapping() -> dict:
 
 
 if __name__ == "__main__":
+    _mqtt_start()
     print(f"启动 Web 映射管理后台：http://localhost:5000")
     print(f"配置文件：{MAPPING_FILE}")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True, threaded=True)

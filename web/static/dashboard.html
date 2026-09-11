@@ -6,7 +6,6 @@
   <title>物联网全链路监控大屏 · IoT Dashboard</title>
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
   <script src="https://unpkg.com/echarts@5/dist/echarts.min.js"></script>
-  <script src="https://unpkg.com/mqtt/dist/mqtt.esm.js"></script>
   <style>
     :root {
       --bg: #050b14;
@@ -390,10 +389,6 @@
   <script>
     const { createApp, reactive, computed, onMounted, onUnmounted, ref } = Vue;
 
-    const BROKER = 'ws://172.16.4.211:9783/mqtt';
-    const USER = 'test';
-    const PASS = '123456';
-
     createApp({
       setup() {
         const clock = ref('');
@@ -415,20 +410,35 @@
         ]);
 
         const trendData = reactive({ time: [], power: [], temp: [] });
-        let topoChart, trendChart, onlineChart, mqttClient, timer;
+        let topoChart, trendChart, onlineChart, eventSource, timer;
 
-        // 设备统计
+        // 设备统计：优先以 JetLinks 平台返回的 state 为准
+        const deviceIdToOnline = computed(() => {
+          const map = {};
+          platformDevices.value?.forEach(d => {
+            map[d.id] = (d.state === 'online' || d.state === true || d.state === 'True');
+          });
+          return map;
+        });
+
         const devices = computed(() => {
           const list = [];
+          const seen = new Set();
           mapping.relay_groups?.forEach(g => {
+            list.push({ id: g.device_id, name: `${g.name} 父网关`, online: deviceIdToOnline.value[g.device_id] ?? true });
+            seen.add(g.device_id);
             g.channels?.forEach(c => {
-              list.push({ id: c.device_id, name: c.name || c.device_id, online: true });
+              list.push({ id: c.device_id, name: c.name || c.device_id, online: deviceIdToOnline.value[c.device_id] ?? true });
+              seen.add(c.device_id);
             });
           });
           mapping.modbus_sensors?.forEach(s => {
-            list.push({ id: s.device_id, name: s.name || s.device_id, online: s.enabled });
+            list.push({ id: s.device_id, name: s.name || s.device_id, online: deviceIdToOnline.value[s.device_id] ?? s.enabled });
+            seen.add(s.device_id);
           });
-          ['pir-001-lfx', 'smoke-001-lfx'].forEach(id => list.push({ id, name: id, online: true }));
+          ['lock-002-lfx', 'light-003-lfx', 'light-004-lfx', 'ac-002-lfx', 'pir-001-lfx', 'smoke-001-lfx', 'th-001-lfx'].forEach(id => {
+            if (!seen.has(id)) list.push({ id, name: id, online: deviceIdToOnline.value[id] ?? true });
+          });
           return list;
         });
 
@@ -560,9 +570,11 @@
           if (alerts.length > 20) alerts.pop();
         }
 
-        function handleMqttMessage(topic, payload) {
+        function handleLiveMessage(topic, payload) {
           let data;
-          try { data = JSON.parse(payload); } catch { return; }
+          try {
+            data = (typeof payload === 'string') ? JSON.parse(payload) : payload;
+          } catch { return; }
           const parts = topic.split('/');
           const product = parts[1] || '';
           const device = parts[2] || '';
@@ -595,21 +607,31 @@
           }
         }
 
-        function connectMqtt() {
-          try {
-            mqttClient = mqtt.connect(BROKER, { username: USER, password: PASS, reconnectPeriod: 5000 });
-            mqttClient.on('connect', () => {
-              mqttConnected.value = true;
-              mqttClient.subscribe([
-                '/relay4_lfx/7ce8b1c1a7fc/property/post',
-                '/relay4_lfx/7ce8b1c1a7fc/properties/report',
-                '/+/+/properties/report',
-              ]);
-            });
-            mqttClient.on('message', (topic, msg) => handleMqttMessage(topic, msg.toString()));
-            mqttClient.on('close', () => { mqttConnected.value = false; });
-            mqttClient.on('error', (e) => { console.warn('MQTT error', e); mqttConnected.value = false; });
-          } catch (e) { console.warn('MQTT 连接失败', e); }
+        let eventSource;
+        function connectLive() {
+          if (!window.EventSource) {
+            console.warn('浏览器不支持 EventSource');
+            return;
+          }
+          eventSource = new EventSource('/api/live');
+          eventSource.onopen = () => { mqttConnected.value = true; };
+          eventSource.onerror = () => { mqttConnected.value = false; };
+          eventSource.addEventListener('snapshot', (e) => {
+            try {
+              const snap = JSON.parse(e.data);
+              Object.entries(snap).forEach(([topic, packet]) => {
+                handleLiveMessage(topic, packet.payload);
+              });
+            } catch (err) { console.warn('snapshot 解析失败', err); }
+          });
+          eventSource.onmessage = (e) => {
+            try {
+              const packet = JSON.parse(e.data);
+              if (packet && packet.topic) {
+                handleLiveMessage(packet.topic, packet.payload);
+              }
+            } catch (err) { console.warn('SSE 消息解析失败', err); }
+          };
         }
 
         async function scenario(name) {
@@ -637,14 +659,14 @@
           timer = setInterval(updateClock, 1000);
           loadMapping(); loadPlatformDevices();
           initTopology(); initTrend(); initOnline();
-          connectMqtt();
+          connectLive();
           setInterval(updateCharts, 3000);
           window.addEventListener('resize', () => { topoChart?.resize(); trendChart?.resize(); onlineChart?.resize(); });
         });
 
         onUnmounted(() => {
           clearInterval(timer);
-          mqttClient?.end();
+          if (eventSource) { eventSource.close(); eventSource = null; }
         });
 
         return { clock, mqttConnected, stats, channels, latest, alerts, devices, tempColor, scenario };
