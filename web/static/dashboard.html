@@ -102,6 +102,23 @@
       content: ''; width: 4px; height: 14px; border-radius: 2px;
       background: var(--primary);
     }
+    .alert-count {
+      font-size: 12px; font-weight: 600; color: var(--text-mu);
+      background: var(--panel-2); border: 1px solid var(--border);
+      padding: 1px 8px; border-radius: 10px;
+    }
+    .alert-clear-btn {
+      font-size: 12px; font-weight: 600; color: var(--danger);
+      background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.4);
+      padding: 4px 12px; border-radius: 6px; cursor: pointer;
+      transition: .15s;
+    }
+    .alert-clear-btn:hover:not(:disabled) {
+      background: rgba(239,68,68,.18); border-color: var(--danger);
+    }
+    .alert-clear-btn:disabled {
+      opacity: .4; cursor: not-allowed;
+    }
 
     /* KPI */
     .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -360,8 +377,14 @@
       <div class="col">
         <!-- 告警列表 -->
         <div class="panel" style="flex:1">
-          <div class="panel-title">最近告警</div>
-          <div class="alert-list scroll-y" style="max-height: calc(100% - 30px);">
+          <div class="panel-title">
+            <span>最近告警</span>
+            <span style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+              <span class="alert-count">{{ alerts.length }}</span>
+              <button class="alert-clear-btn" :disabled="!alerts.length" @click="clearAlerts">🛡️ 清空</button>
+            </span>
+          </div>
+          <div class="alert-list scroll-y" style="max-height: calc(100% - 50px);">
             <div v-for="(a, i) in alerts" :key="i" :class="['alert-item', a.level]">
               <div :class="['alert-tag', a.level]">{{ a.levelLabel }}</div>
               <div class="alert-body">
@@ -684,7 +707,16 @@
           if (eventSource) { eventSource.close(); eventSource = null; }
         });
 
-        return { clock, mqttConnected, stats, channels, latest, alerts, devices, tempColor, scenario };
+        function clearAlerts() {
+          const n = alerts.length;
+          alerts.length = 0;
+          if (n > 0) {
+            // 给个轻微的提示，让用户知道刚才确实清掉了多少条
+            setTimeout(() => addAlert('info', '告警已清空', `共清除了 ${n} 条历史告警`), 50);
+          }
+        }
+
+        return { clock, mqttConnected, stats, channels, latest, alerts, devices, tempColor, scenario, clearAlerts };
       }
     }).mount('#app');
   </script>
