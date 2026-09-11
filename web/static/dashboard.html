@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>物联网全链路监控大屏 · IoT Dashboard</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://unpkg.com/echarts@5/dist/echarts.min.js"></script>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.esm.js"></script>
+  <style>
+    :root {
+      --bg: #050b14;
+      --panel: #0b1220;
+      --panel-2: #0f172a;
+      --border: #1e293b;
+      --text: #e2e8f0;
+      --text-mu: #94a3b8;
+      --text-li: #64748b;
+      --primary: #3b82f6;
+      --primary-glow: rgba(59,130,246,.35);
+      --success: #10b981;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --info: #8b5cf6;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; }
+    body {
+      font-family: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    /* Header */
+    .header {
+      height: 64px;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 24px;
+      background: linear-gradient(90deg, rgba(59,130,246,.08), rgba(139,92,246,.08));
+      border-bottom: 1px solid var(--border);
+      position: relative;
+    }
+    .header::after {
+      content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--primary), transparent);
+    }
+    .header-left { display: flex; align-items: center; gap: 14px; }
+    .logo {
+      width: 38px; height: 38px; border-radius: 10px;
+      background: linear-gradient(135deg, #3b82f6, #06b6d4);
+      display: grid; place-items: center; font-size: 20px;
+      box-shadow: 0 0 18px var(--primary-glow);
+    }
+    .title { font-size: 20px; font-weight: 700; letter-spacing: 1px; }
+    .subtitle { font-size: 12px; color: var(--text-mu); margin-top: 2px; }
+    .header-right { display: flex; align-items: center; gap: 20px; color: var(--text-mu); font-size: 13px; }
+    .clock { font-size: 18px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+    .mqtt-status { display: flex; align-items: center; gap: 6px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-li); }
+    .dot.on { background: var(--success); box-shadow: 0 0 8px var(--success); }
+    .dot.off { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+
+    /* Layout */
+    .container {
+      display: grid;
+      grid-template-columns: 300px 1fr 320px;
+      gap: 16px;
+      padding: 16px;
+      height: calc(100vh - 64px);
+    }
+    .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      position: relative;
+      overflow: hidden;
+    }
+    .panel::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, var(--primary), var(--info));
+      opacity: .6;
+    }
+    .panel-title {
+      font-size: 14px; font-weight: 600; color: var(--text);
+      display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+    }
+    .panel-title::before {
+      content: ''; width: 4px; height: 14px; border-radius: 2px;
+      background: var(--primary);
+    }
+
+    /* KPI */
+    .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .kpi-box {
+      background: var(--panel-2); border-radius: 8px; padding: 12px;
+      border: 1px solid var(--border); text-align: center;
+    }
+    .kpi-num { font-size: 22px; font-weight: 700; margin: 4px 0; }
+    .kpi-label-2 { font-size: 12px; color: var(--text-mu); }
+    .kpi-num.success { color: var(--success); }
+    .kpi-num.warn { color: var(--warn); }
+    .kpi-num.danger { color: var(--danger); }
+    .kpi-num.primary { color: var(--primary); }
+
+    /* Channel status */
+    .channel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .channel-card {
+      background: var(--panel-2); border-radius: 8px; padding: 10px;
+      border: 1px solid var(--border); display: flex; align-items: center; gap: 10px;
+    }
+    .channel-led {
+      width: 10px; height: 10px; border-radius: 50%; background: var(--text-li);
+      box-shadow: 0 0 0 rgba(0,0,0,0); transition: .2s;
+    }
+    .channel-led.on { background: var(--success); box-shadow: 0 0 10px var(--success); }
+    .channel-led.off { background: var(--text-li); }
+    .channel-info { flex: 1; min-width: 0; }
+    .channel-name { font-size: 13px; font-weight: 500; }
+    .channel-meta { font-size: 11px; color: var(--text-li); }
+    .channel-p { font-size: 11px; color: var(--text-mu); margin-top: 2px; }
+
+    /* Sensor values */
+    .sensor-row { display: flex; gap: 10px; }
+    .sensor-box {
+      flex: 1; background: var(--panel-2); border-radius: 8px; padding: 12px;
+      border: 1px solid var(--border); text-align: center;
+    }
+    .sensor-icon { font-size: 24px; }
+    .sensor-val { font-size: 20px; font-weight: 700; margin-top: 4px; }
+    .sensor-unit { font-size: 12px; color: var(--text-mu); }
+
+    /* Topology chart */
+    #topologyChart { width: 100%; height: 260px; }
+    #trendChart { width: 100%; height: 220px; }
+
+    /* Alerts */
+    .alert-list { display: flex; flex-direction: column; gap: 8px; }
+    .alert-item {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--panel-2); border-radius: 6px; padding: 8px 10px;
+      border-left: 3px solid transparent;
+    }
+    .alert-item.critical { border-left-color: var(--danger); }
+    .alert-item.warning { border-left-color: var(--warn); }
+    .alert-item.info { border-left-color: var(--primary); }
+    .alert-tag {
+      font-size: 10px; font-weight: 700; padding: 2px 5px; border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .alert-tag.critical { background: rgba(239,68,68,.15); color: #f87171; }
+    .alert-tag.warning { background: rgba(245,158,11,.15); color: #fbbf24; }
+    .alert-tag.info { background: rgba(59,130,246,.15); color: #60a5fa; }
+    .alert-body { flex: 1; min-width: 0; }
+    .alert-title { font-size: 12px; }
+    .alert-desc { font-size: 11px; color: var(--text-mu); }
+    .alert-time { font-size: 10px; color: var(--text-li); flex-shrink: 0; }
+
+    /* Online rate */
+    #onlineChart { width: 100%; height: 160px; }
+
+    /* Sim sensors */
+    .sim-list { display: flex; flex-direction: column; gap: 8px; }
+    .sim-item {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--panel-2); border-radius: 6px; padding: 8px 10px;
+      font-size: 12px;
+    }
+    .sim-val { font-weight: 600; }
+
+    /* Scenario buttons */
+    .scenario-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .scenario-btn {
+      background: linear-gradient(135deg, rgba(59,130,246,.2), rgba(139,92,246,.2));
+      border: 1px solid var(--primary); border-radius: 8px;
+      color: var(--text); padding: 10px; cursor: pointer;
+      font-size: 12px; text-align: center; transition: .2s;
+    }
+    .scenario-btn:hover { background: rgba(59,130,246,.35); }
+    .scenario-btn:active { transform: translateY(1px); }
+    .scenario-btn.danger { border-color: var(--danger); background: rgba(239,68,68,.15); }
+    .scenario-btn.danger:hover { background: rgba(239,68,68,.3); }
+
+    /* Link status flow */
+    .link-flow {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--panel-2); border-radius: 8px; padding: 10px 14px;
+      font-size: 12px;
+    }
+    .link-node { text-align: center; }
+    .link-node .emoji { font-size: 20px; }
+    .link-node .name { font-size: 11px; color: var(--text-mu); margin-top: 2px; }
+    .link-arrow { color: var(--primary); font-size: 16px; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
+
+    .scroll-y { overflow-y: auto; }
+    .scroll-y::-webkit-scrollbar { width: 4px; }
+    .scroll-y::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .empty { text-align: center; color: var(--text-li); font-size: 12px; padding: 20px 0; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header class="header">
+      <div class="header-left">
+        <div class="logo">🌐</div>
+        <div>
+          <div class="title">物联网全链路监控大屏</div>
+          <div class="subtitle">设备层 → MQTT/Modbus → JetLinks → 可视化展示</div>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="mqtt-status">
+          <span class="dot" :class="mqttConnected ? 'on' : 'off'"></span>
+          <span>{{ mqttConnected ? 'MQTT 已连接' : 'MQTT 未连接' }}</span>
+        </div>
+        <div>EMQX: 172.16.4.211:9783</div>
+        <div class="clock">{{ clock }}</div>
+      </div>
+    </header>
+
+    <div class="container">
+      <!-- 左栏 -->
+      <div class="col">
+        <!-- 设备概览 -->
+        <div class="panel">
+          <div class="panel-title">设备概览</div>
+          <div class="kpi-grid">
+            <div class="kpi-box">
+              <div class="kpi-label-2">设备总数</div>
+              <div class="kpi-num primary">{{ stats.total }}</div>
+            </div>
+            <div class="kpi-box">
+              <div class="kpi-label-2">在线设备</div>
+              <div class="kpi-num success">{{ stats.online }}</div>
+            </div>
+            <div class="kpi-box">
+              <div class="kpi-label-2">离线设备</div>
+              <div class="kpi-num warn">{{ stats.offline }}</div>
+            </div>
+            <div class="kpi-box">
+              <div class="kpi-label-2">告警数</div>
+              <div class="kpi-num danger">{{ alerts.length }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 通道状态 -->
+        <div class="panel">
+          <div class="panel-title">继电器通道状态</div>
+          <div class="channel-grid">
+            <div v-for="(ch, i) in channels" :key="i" class="channel-card">
+              <div class="channel-led" :class="ch.on ? 'on' : 'off'"></div>
+              <div class="channel-info">
+                <div class="channel-name">{{ ch.name }}</div>
+                <div class="channel-meta">{{ ch.deviceId }}</div>
+                <div class="channel-p">{{ ch.on ? ch.power + 'W' : '已关闭' }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 实时温湿度 -->
+        <div class="panel">
+          <div class="panel-title">温湿度实时值</div>
+          <div class="sensor-row">
+            <div class="sensor-box">
+              <div class="sensor-icon">🌡️</div>
+              <div class="sensor-val" :style="{color: tempColor}">{{ latest.temperature !== null ? latest.temperature : '--' }}</div>
+              <div class="sensor-unit">°C {{ latest.temperature ? '温度' : '' }}</div>
+            </div>
+            <div class="sensor-box">
+              <div class="sensor-icon">💧</div>
+              <div class="sensor-val" style="color:#3b82f6">{{ latest.humidity !== null ? latest.humidity : '--' }}</div>
+              <div class="sensor-unit">% {{ latest.humidity ? '湿度' : '' }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 模拟传感器 -->
+        <div class="panel" style="flex:1">
+          <div class="panel-title">模拟传感器</div>
+          <div class="sim-list">
+            <div class="sim-item">
+              <span>人体感应 pir-001-lfx</span>
+              <span class="sim-val" :style="{color: latest.occupancy ? '#10b981' : '#64748b'}">
+                {{ latest.occupancy === 1 ? '有人' : (latest.occupancy === 0 ? '无人' : '--') }}
+              </span>
+            </div>
+            <div class="sim-item">
+              <span>烟雾 smoke-001-lfx</span>
+              <span class="sim-val" :style="{color: (latest.smoke > 50 || latest.alarm) ? '#ef4444' : '#64748b'}">
+                {{ latest.smoke !== null ? latest.smoke : '--' }}
+              </span>
+            </div>
+            <div class="sim-item">
+              <span>烟雾告警 alarm</span>
+              <span class="sim-val" :style="{color: latest.alarm ? '#ef4444' : '#64748b'}">
+                {{ latest.alarm === true ? '触发' : (latest.alarm === false ? '正常' : '--') }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 中栏 -->
+      <div class="col" style="flex:1">
+        <!-- 全链路流程 -->
+        <div class="panel">
+          <div class="panel-title">全链路业务流程</div>
+          <div class="link-flow">
+            <div class="link-node"><div class="emoji">👤</div><div class="name">用户操作</div></div>
+            <div class="link-arrow">➜</div>
+            <div class="link-node"><div class="emoji">💻</div><div class="name">前端大屏</div></div>
+            <div class="link-arrow">➜</div>
+            <div class="link-node"><div class="emoji">🌐</div><div class="name">JetLinks 平台</div></div>
+            <div class="link-arrow">➜</div>
+            <div class="link-node"><div class="emoji">📡</div><div class="name">MQTT 接入</div></div>
+            <div class="link-arrow">➜</div>
+            <div class="link-node"><div class="emoji">🔌</div><div class="name">设备执行</div></div>
+            <div class="link-arrow" style="transform:rotate(180deg)">➜</div>
+            <div class="link-node"><div class="emoji">📊</div><div class="name">数据上报</div></div>
+          </div>
+          <div id="topologyChart"></div>
+        </div>
+
+        <!-- 数据趋势 -->
+        <div class="panel" style="flex:1">
+          <div class="panel-title">数据趋势（功率 / 温度）</div>
+          <div id="trendChart"></div>
+        </div>
+
+        <!-- 场景联动 -->
+        <div class="panel">
+          <div class="panel-title">场景联动控制</div>
+          <div class="scenario-grid">
+            <button class="scenario-btn" @click="scenario('allOn')">💡 全开照明</button>
+            <button class="scenario-btn" @click="scenario('allOff')">🌙 全关照明</button>
+            <button class="scenario-btn" @click="scenario('acOn')">❄️ 开启空调</button>
+            <button class="scenario-btn danger" @click="scenario('alarmReset')">🛡️ 告警复位</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右栏 -->
+      <div class="col">
+        <!-- 告警列表 -->
+        <div class="panel" style="flex:1">
+          <div class="panel-title">最近告警</div>
+          <div class="alert-list scroll-y" style="max-height: calc(100% - 30px);">
+            <div v-for="(a, i) in alerts" :key="i" :class="['alert-item', a.level]">
+              <div :class="['alert-tag', a.level]">{{ a.levelLabel }}</div>
+              <div class="alert-body">
+                <div class="alert-title">{{ a.title }}</div>
+                <div class="alert-desc">{{ a.desc }}</div>
+              </div>
+              <div class="alert-time">{{ a.time }}</div>
+            </div>
+            <div v-if="!alerts.length" class="empty">暂无告警</div>
+          </div>
+        </div>
+
+        <!-- 在线率 -->
+        <div class="panel">
+          <div class="panel-title">设备在线率</div>
+          <div id="onlineChart"></div>
+        </div>
+
+        <!-- 设备清单 -->
+        <div class="panel" style="flex:1">
+          <div class="panel-title">设备清单</div>
+          <div class="alert-list scroll-y" style="max-height: calc(100% - 30px);">
+            <div v-for="d in devices" :key="d.id" class="alert-item info">
+              <div class="alert-body">
+                <div class="alert-title">{{ d.name }}</div>
+                <div class="alert-desc">{{ d.id }}</div>
+              </div>
+              <div class="alert-time" :style="{color: d.online ? '#10b981' : '#ef4444'}">{{ d.online ? '在线' : '离线' }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { createApp, reactive, computed, onMounted, onUnmounted, ref } = Vue;
+
+    const BROKER = 'ws://172.16.4.211:9783/mqtt';
+    const USER = 'test';
+    const PASS = '123456';
+
+    createApp({
+      setup() {
+        const clock = ref('');
+        const mqttConnected = ref(false);
+        const mapping = reactive({ relay_groups: [], modbus_sensors: [] });
+        const platformDevices = ref([]);
+        const latest = reactive({ temperature: null, humidity: null, occupancy: null, smoke: null, alarm: null });
+        const channels = reactive([
+          { name: '门锁 CH1', deviceId: 'lock-002-lfx', on: false, power: 0 },
+          { name: '灯1 CH2', deviceId: 'light-003-lfx', on: false, power: 0 },
+          { name: '灯2 CH3', deviceId: 'light-004-lfx', on: false, power: 0 },
+          { name: '空调 CH4', deviceId: 'ac-002-lfx', on: false, power: 0 },
+        ]);
+
+        const alerts = reactive([
+          { level: 'critical', levelLabel: '严重', title: '烟雾感应器 smoke-001-lfx · 烟雾浓度异常', desc: '浓度读数 78，超过阈值 50，建议立即排查', time: '2026-09-11 13:31:02' },
+          { level: 'warning', levelLabel: '一般', title: '温湿度传感器 th-001-lfx · 温度过高', desc: '温度 38.2°C 超过上限 35°C', time: '2026-09-11 13:25:18' },
+          { level: 'warning', levelLabel: '一般', title: '灯1 light-003-lfx · 功率过载', desc: '当前功率 128W，超过额定 100W', time: '2026-09-11 13:22:07' },
+        ]);
+
+        const trendData = reactive({ time: [], power: [], temp: [] });
+        let topoChart, trendChart, onlineChart, mqttClient, timer;
+
+        // 设备统计
+        const devices = computed(() => {
+          const list = [];
+          mapping.relay_groups?.forEach(g => {
+            g.channels?.forEach(c => {
+              list.push({ id: c.device_id, name: c.name || c.device_id, online: true });
+            });
+          });
+          mapping.modbus_sensors?.forEach(s => {
+            list.push({ id: s.device_id, name: s.name || s.device_id, online: s.enabled });
+          });
+          ['pir-001-lfx', 'smoke-001-lfx'].forEach(id => list.push({ id, name: id, online: true }));
+          return list;
+        });
+
+        const stats = computed(() => {
+          const total = devices.value.length;
+          const online = devices.value.filter(d => d.online).length;
+          return { total, online, offline: total - online };
+        });
+
+        const tempColor = computed(() => {
+          const t = latest.temperature;
+          if (t === null) return '#94a3b8';
+          if (t > 35) return '#ef4444';
+          if (t < 10) return '#3b82f6';
+          return '#10b981';
+        });
+
+        function updateClock() {
+          const n = new Date();
+          clock.value = n.toLocaleString('zh-CN', { hour12: false });
+        }
+
+        async function loadMapping() {
+          try {
+            const r = await fetch('/api/mapping');
+            const j = await r.json();
+            if (j.ok) Object.assign(mapping, j.data);
+          } catch (e) { console.warn('mapping 加载失败', e); }
+        }
+
+        async function loadPlatformDevices() {
+          try {
+            const r = await fetch('/api/platform/devices');
+            const j = await r.json();
+            if (j.ok) platformDevices.value = j.data;
+          } catch (e) { console.warn('平台设备加载失败', e); }
+        }
+
+        function initTopology() {
+          topoChart = echarts.init(document.getElementById('topologyChart'));
+          const option = {
+            backgroundColor: 'transparent',
+            tooltip: { formatter: '{b}' },
+            series: [{
+              type: 'graph', layout: 'none', symbolSize: 50, roam: false,
+              label: { show: true, color: '#e2e8f0', fontSize: 11 },
+              edgeSymbol: ['none', 'arrow'], edgeSymbolSize: [0, 10],
+              edgeLabel: { fontSize: 10, color: '#64748b' },
+              data: [
+                { name: '4路继电器\n7ce8b1c1a7fc', x: 80, y: 80, itemStyle: { color: '#3b82f6' } },
+                { name: '温湿度\nth-001-lfx', x: 80, y: 180, itemStyle: { color: '#06b6d4' } },
+                { name: 'EMQX\nMQTT Broker', x: 280, y: 130, itemStyle: { color: '#8b5cf6' } },
+                { name: 'JetLinks\n172.16.4.211', x: 480, y: 130, itemStyle: { color: '#f59e0b' } },
+                { name: '监控大屏', x: 680, y: 130, itemStyle: { color: '#10b981' } },
+              ],
+              links: [
+                { source: '4路继电器\n7ce8b1c1a7fc', target: 'EMQX\nMQTT Broker', label: { show: true, formatter: '上行' } },
+                { source: '温湿度\nth-001-lfx', target: 'EMQX\nMQTT Broker', label: { show: true, formatter: '上行' } },
+                { source: 'EMQX\nMQTT Broker', target: 'JetLinks\n172.16.4.211' },
+                { source: 'JetLinks\n172.16.4.211', target: '监控大屏' },
+                { source: '监控大屏', target: 'EMQX\nMQTT Broker', lineStyle: { type: 'dashed' }, label: { show: true, formatter: '下行控制' } },
+              ],
+              lineStyle: { color: '#3b82f6', curveness: 0.1, width: 2 },
+            }]
+          };
+          topoChart.setOption(option);
+        }
+
+        function initTrend() {
+          trendChart = echarts.init(document.getElementById('trendChart'));
+          const option = {
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis' },
+            legend: { data: ['灯1功率(W)', '温度(°C)'], textStyle: { color: '#94a3b8' }, bottom: 0 },
+            grid: { left: 40, right: 20, top: 20, bottom: 30 },
+            xAxis: { type: 'category', data: [], axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#64748b' } },
+            yAxis: { type: 'value', splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#64748b' } },
+            series: [
+              { name: '灯1功率(W)', type: 'line', smooth: true, data: [], lineStyle: { color: '#f59e0b', width: 2 }, areaStyle: { color: 'rgba(245,158,11,.15)' } },
+              { name: '温度(°C)', type: 'line', smooth: true, data: [], lineStyle: { color: '#ef4444', width: 2 }, areaStyle: { color: 'rgba(239,68,68,.1)' } },
+            ]
+          };
+          trendChart.setOption(option);
+        }
+
+        function initOnline() {
+          onlineChart = echarts.init(document.getElementById('onlineChart'));
+          const option = {
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'item' },
+            series: [{
+              type: 'pie', radius: ['55%', '75%'], center: ['50%', '50%'],
+              label: { show: true, color: '#e2e8f0', formatter: '{b}\n{d}%' },
+              data: [
+                { value: 1, name: '在线', itemStyle: { color: '#10b981' } },
+                { value: 0, name: '离线', itemStyle: { color: '#334155' } },
+              ]
+            }]
+          };
+          onlineChart.setOption(option);
+        }
+
+        function updateCharts() {
+          const now = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+          if (trendData.time.length > 20) {
+            trendData.time.shift(); trendData.power.shift(); trendData.temp.shift();
+          }
+          trendData.time.push(now);
+          const p = channels.find(c => c.deviceId === 'light-003-lfx')?.power || 0;
+          trendData.power.push(p);
+          trendData.temp.push(latest.temperature || 0);
+
+          trendChart.setOption({ xAxis: { data: trendData.time }, series: [
+            { data: trendData.power }, { data: trendData.temp }
+          ]});
+
+          const online = stats.value.online || 1;
+          const offline = stats.value.offline || 0;
+          onlineChart.setOption({ series: [{ data: [
+            { value: online, name: '在线', itemStyle: { color: '#10b981' } },
+            { value: offline, name: '离线', itemStyle: { color: '#334155' } },
+          ]}] });
+        }
+
+        function addAlert(level, title, desc) {
+          const labels = { critical: '严重', warning: '一般', info: '提示' };
+          const t = new Date().toLocaleString('zh-CN', { hour12: false });
+          alerts.unshift({ level, levelLabel: labels[level] || level, title, desc, time: t });
+          if (alerts.length > 20) alerts.pop();
+        }
+
+        function handleMqttMessage(topic, payload) {
+          let data;
+          try { data = JSON.parse(payload); } catch { return; }
+          const parts = topic.split('/');
+          const product = parts[1] || '';
+          const device = parts[2] || '';
+          const props = data.properties || data.data || data;
+
+          // 父网关属性（继电器通道）
+          if (product === 'relay4_lfx' && device === '7ce8b1c1a7fc') {
+            if (props.ch1_state !== undefined) channels[0].on = !!props.ch1_state;
+            if (props.ch2_state !== undefined) { channels[1].on = !!props.ch2_state; channels[1].power = props.ch2_power || (props.ch2_state ? 22 : 0); }
+            if (props.ch3_state !== undefined) { channels[2].on = !!props.ch3_state; channels[2].power = props.ch3_power || (props.ch3_state ? 18 : 0); }
+            if (props.ch4_state !== undefined) { channels[3].on = !!props.ch4_state; channels[3].power = props.ch4_power || (props.ch4_state ? 1200 : 0); }
+            if (props.temperature !== undefined) latest.temperature = props.temperature;
+            if (props.humidity !== undefined) latest.humidity = props.humidity;
+            // 告警触发
+            if (latest.temperature > 35) addAlert('warning', '温湿度传感器 th-001-lfx · 温度过高', `温度 ${latest.temperature}°C 超过上限 35°C`);
+          }
+
+          // 子设备属性（JetLinks 风格 /{product}/{device}/properties/report）
+          if (product === 'th-lfx' && device === 'th-001-lfx') {
+            if (props.temperature !== undefined) latest.temperature = props.temperature;
+            if (props.humidity !== undefined) latest.humidity = props.humidity;
+          }
+          if (product === 'pir-lfx' && device === 'pir-001-lfx') {
+            latest.occupancy = props.occupancy;
+          }
+          if (product === 'smoke-lfx' && device === 'smoke-001-lfx') {
+            latest.smoke = props.smoke;
+            latest.alarm = props.alarm;
+            if (props.alarm || (props.smoke > 50)) addAlert('critical', '烟雾感应器 smoke-001-lfx · 烟雾浓度异常', `浓度读数 ${props.smoke}，超过阈值 50`);
+          }
+        }
+
+        function connectMqtt() {
+          try {
+            mqttClient = mqtt.connect(BROKER, { username: USER, password: PASS, reconnectPeriod: 5000 });
+            mqttClient.on('connect', () => {
+              mqttConnected.value = true;
+              mqttClient.subscribe([
+                '/relay4_lfx/7ce8b1c1a7fc/property/post',
+                '/relay4_lfx/7ce8b1c1a7fc/properties/report',
+                '/+/+/properties/report',
+              ]);
+            });
+            mqttClient.on('message', (topic, msg) => handleMqttMessage(topic, msg.toString()));
+            mqttClient.on('close', () => { mqttConnected.value = false; });
+            mqttClient.on('error', (e) => { console.warn('MQTT error', e); mqttConnected.value = false; });
+          } catch (e) { console.warn('MQTT 连接失败', e); }
+        }
+
+        async function scenario(name) {
+          // 通过父网关 HTTP API 触发控制（仅本机可达时）
+          const base = 'http://192.168.30.160/api/relay';
+          try {
+            if (name === 'allOn') {
+              for (let i = 1; i <= 4; i++) await fetch(`${base}?ch=${i}&state=1`);
+              addAlert('info', '场景联动 · 全开照明', '已下发 CH1-CH4 开启指令');
+            } else if (name === 'allOff') {
+              for (let i = 1; i <= 4; i++) await fetch(`${base}?ch=${i}&state=0`);
+              addAlert('info', '场景联动 · 全关照明', '已下发 CH1-CH4 关闭指令');
+            } else if (name === 'acOn') {
+              await fetch(`${base}?ch=4&state=1`);
+              addAlert('info', '场景联动 · 开启空调', '已下发 CH4 开启指令');
+            } else if (name === 'alarmReset') {
+              alerts.length = 0;
+              addAlert('info', '告警复位', '已清空当前告警列表');
+            }
+          } catch (e) { addAlert('warning', '场景联动失败', '无法连接父网关 HTTP API'); }
+        }
+
+        onMounted(() => {
+          updateClock();
+          timer = setInterval(updateClock, 1000);
+          loadMapping(); loadPlatformDevices();
+          initTopology(); initTrend(); initOnline();
+          connectMqtt();
+          setInterval(updateCharts, 3000);
+          window.addEventListener('resize', () => { topoChart?.resize(); trendChart?.resize(); onlineChart?.resize(); });
+        });
+
+        onUnmounted(() => {
+          clearInterval(timer);
+          mqttClient?.end();
+        });
+
+        return { clock, mqttConnected, stats, channels, latest, alerts, devices, tempColor, scenario };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>

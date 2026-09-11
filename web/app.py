@@ -136,6 +136,11 @@ def index():
     return send_from_directory("static", "index.html")
 
 
+@app.route("/dashboard")
+def dashboard():
+    return send_from_directory("static", "dashboard.html")
+
+
 # ---- 映射 CRUD ----
 @app.route("/api/mapping", methods=["GET"])
 def get_mapping():
