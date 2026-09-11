@@ -4,8 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>物联网全链路监控大屏 · IoT Dashboard</title>
-  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-  <script src="https://unpkg.com/echarts@5/dist/echarts.min.js"></script>
+  <script src="/static/vendor/vue.global.js"></script>
+  <script src="/static/vendor/echarts.min.js"></script>
+  <script>
+    // 如果 Vue 或 ECharts 没有正确加载，至少给出可读提示，而不是满屏 {{ }}
+    window.addEventListener('load', function() {
+      if (typeof window.Vue === 'undefined' || typeof window.echarts === 'undefined') {
+        document.body.innerHTML = '<div style="padding:40px;color:#fff;background:#0b1220;font-family:sans-serif;">'
+          + '<h2>大屏资源加载失败</h2>'
+          + '<p>未能加载 ' + (typeof window.Vue === 'undefined' ? 'Vue ' : '') + (typeof window.echarts === 'undefined' ? 'ECharts' : '') + '</p>'
+          + '<p>请检查网络或刷新页面，并打开浏览器控制台查看具体错误。</p></div>';
+      }
+    });
+  </script>
   <style>
     :root {
       --bg: #050b14;
