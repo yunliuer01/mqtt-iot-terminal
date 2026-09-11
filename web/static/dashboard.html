@@ -80,7 +80,19 @@
       padding: 16px;
       height: calc(100vh - 64px);
     }
-    .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+    .col {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-width: 0;
+      min-height: 0;          /* grid item 默认 min-height: auto，会阻止内部 flex 收缩滚动，必须显式置 0 */
+      overflow-y: auto;       /* 三列内容超出视口时各自独立滚动 */
+      padding-right: 4px;     /* 给滚动条留点位置，避免遮住内容 */
+    }
+    .col::-webkit-scrollbar { width: 5px; }
+    .col::-webkit-scrollbar-track { background: transparent; }
+    .col::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .col::-webkit-scrollbar-thumb:hover { background: var(--text-li); }
     .panel {
       background: var(--panel);
       border: 1px solid var(--border);
@@ -309,7 +321,7 @@
         </div>
 
         <!-- 模拟传感器 -->
-        <div class="panel" style="flex:1">
+        <div class="panel">
           <div class="panel-title">模拟传感器</div>
           <div class="sim-list">
             <div class="sim-item">
@@ -356,7 +368,7 @@
         </div>
 
         <!-- 数据趋势 -->
-        <div class="panel" style="flex:1">
+        <div class="panel">
           <div class="panel-title">数据趋势（功率 / 温度）</div>
           <div id="trendChart"></div>
         </div>
@@ -376,7 +388,7 @@
       <!-- 右栏 -->
       <div class="col">
         <!-- 告警列表 -->
-        <div class="panel" style="flex:1">
+        <div class="panel">
           <div class="panel-title">
             <span>最近告警</span>
             <span style="margin-left:auto;display:flex;gap:8px;align-items:center;">
@@ -384,7 +396,7 @@
               <button class="alert-clear-btn" :disabled="!alerts.length" @click="clearAlerts">🛡️ 清空</button>
             </span>
           </div>
-          <div class="alert-list scroll-y" style="max-height: calc(100% - 50px);">
+          <div class="alert-list">
             <div v-for="(a, i) in alerts" :key="i" :class="['alert-item', a.level]">
               <div :class="['alert-tag', a.level]">{{ a.levelLabel }}</div>
               <div class="alert-body">
@@ -404,9 +416,9 @@
         </div>
 
         <!-- 设备清单 -->
-        <div class="panel" style="flex:1">
+        <div class="panel">
           <div class="panel-title">设备清单</div>
-          <div class="alert-list scroll-y" style="max-height: calc(100% - 30px);">
+          <div class="alert-list">
             <div v-for="d in devices" :key="d.id" class="alert-item info">
               <div class="alert-body">
                 <div class="alert-title">{{ d.name }}</div>
