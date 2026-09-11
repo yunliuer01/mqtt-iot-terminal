@@ -799,6 +799,7 @@
         async function scenario(name) {
           // 通过父网关 HTTP API 触发控制（仅本机可达时）
           const base = 'http://192.168.30.160/api/relay';
+          // 单设备动作：CH1=门锁, CH2=灯1, CH3=灯2, CH4=空调
           const actions = {
             lockUnlock:   { ch: 1, state: 1, title: '门锁解锁', desc: '已下发 CH1 解锁指令' },
             lockLock:     { ch: 1, state: 0, title: '门锁上锁', desc: '已下发 CH1 上锁指令' },
@@ -809,23 +810,34 @@
             acOn:         { ch: 4, state: 1, title: '空调开启',  desc: '已下发 CH4 开启指令' },
             acOff:        { ch: 4, state: 0, title: '空调关闭',  desc: '已下发 CH4 关闭指令' }
           };
+          // 串行下发多通道，避免 fetch 并发冲垮 ESP32 HTTP 轮询（v6.0.5 笔记）
+          async function setChannel(ch, state) {
+            try { await fetch(`${base}?ch=${ch}&state=${state}`); }
+            catch (e) { console.warn('CH' + ch + ' 下发失败', e); }
+          }
           try {
             if (name === 'allOn') {
-              for (let i = 1; i <= 4; i++) await fetch(`${base}?ch=${i}&state=1`);
-              addAlert('info', '场景联动 · 全开照明', '已下发 CH1-CH4 开启指令');
+              // 仅开灯：CH2 + CH3（门锁和空调不在「照明」范围内）
+              await setChannel(2, 1); await delay(150);
+              await setChannel(3, 1); await delay(150);
+              addAlert('info', '场景联动 · 全开照明', '已下发 灯1(CH2) + 灯2(CH3) 开启指令');
             } else if (name === 'allOff') {
-              for (let i = 1; i <= 4; i++) await fetch(`${base}?ch=${i}&state=0`);
-              addAlert('info', '场景联动 · 全关照明', '已下发 CH1-CH4 关闭指令');
+              await setChannel(2, 0); await delay(150);
+              await setChannel(3, 0); await delay(150);
+              addAlert('info', '场景联动 · 全关照明', '已下发 灯1(CH2) + 灯2(CH3) 关闭指令');
             } else if (name === 'alarmReset') {
               alerts.length = 0;
               addAlert('info', '告警复位', '已清空当前告警列表');
             } else if (actions[name]) {
               const a = actions[name];
-              await fetch(`${base}?ch=${a.ch}&state=${a.state}`);
+              await setChannel(a.ch, a.state);
               addAlert('info', `场景联动 · ${a.title}`, a.desc);
             }
           } catch (e) { addAlert('warning', '场景联动失败', '无法连接父网关 HTTP API'); }
         }
+
+        // 简易延迟（仅本地使用）
+        function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
         onMounted(() => {
           updateClock();
