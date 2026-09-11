@@ -150,17 +150,18 @@
     .channel-card {
       background: var(--panel-2); border-radius: 8px; padding: 10px;
       border: 1px solid var(--border); display: flex; align-items: center; gap: 10px;
+      min-height: 70px; /* 保证名称/deviceId/状态三行都能显示 */
     }
     .channel-led {
       width: 10px; height: 10px; border-radius: 50%; background: var(--text-li);
-      box-shadow: 0 0 0 rgba(0,0,0,0); transition: .2s;
+      box-shadow: 0 0 0 rgba(0,0,0,0); transition: .2s; flex-shrink: 0;
     }
     .channel-led.on { background: var(--success); box-shadow: 0 0 10px var(--success); }
     .channel-led.off { background: var(--text-li); }
-    .channel-info { flex: 1; min-width: 0; }
-    .channel-name { font-size: 13px; font-weight: 500; }
-    .channel-meta { font-size: 11px; color: var(--text-li); }
-    .channel-p { font-size: 11px; color: var(--text-mu); margin-top: 2px; }
+    .channel-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .channel-name { font-size: 13px; font-weight: 500; line-height: 1.3; }
+    .channel-meta { font-size: 11px; color: var(--text-li); line-height: 1.25; }
+    .channel-p { font-size: 11px; color: var(--text-mu); line-height: 1.25; }
 
     /* Sensor values */
     .sensor-row { display: flex; gap: 10px; }
@@ -377,9 +378,16 @@
         <div class="panel">
           <div class="panel-title">场景联动控制</div>
           <div class="scenario-grid">
+            <button class="scenario-btn" @click="scenario('lockUnlock')">🔓 门锁解锁</button>
+            <button class="scenario-btn" @click="scenario('light1On')">💡 灯1 开</button>
+            <button class="scenario-btn" @click="scenario('light2On')">💡 灯2 开</button>
+            <button class="scenario-btn" @click="scenario('acOn')">❄️ 空调开</button>
+            <button class="scenario-btn" @click="scenario('lockLock')">🔒 门锁上锁</button>
+            <button class="scenario-btn" @click="scenario('light1Off')">🌙 灯1 关</button>
+            <button class="scenario-btn" @click="scenario('light2Off')">🌙 灯2 关</button>
+            <button class="scenario-btn" @click="scenario('acOff')">🌙 空调关</button>
             <button class="scenario-btn" @click="scenario('allOn')">💡 全开照明</button>
             <button class="scenario-btn" @click="scenario('allOff')">🌙 全关照明</button>
-            <button class="scenario-btn" @click="scenario('acOn')">❄️ 开启空调</button>
             <button class="scenario-btn danger" @click="scenario('alarmReset')">🛡️ 告警复位</button>
           </div>
         </div>
@@ -575,9 +583,19 @@
           const option = {
             backgroundColor: 'transparent',
             tooltip: { trigger: 'item' },
+            legend: {
+              bottom: 0, left: 'center',
+              textStyle: { color: '#94a3b8', fontSize: 11 },
+              itemWidth: 10, itemHeight: 10
+            },
             series: [{
-              type: 'pie', radius: ['55%', '75%'], center: ['50%', '50%'],
-              label: { show: true, color: '#e2e8f0', formatter: '{b}\n{d}%' },
+              type: 'pie', radius: ['55%', '75%'], center: ['50%', '45%'],
+              label: {
+                show: true, position: 'center', color: '#e2e8f0',
+                formatter: (p) => p.name === '在线' ? `${p.percent.toFixed(1)}%\n在线率` : ''
+              },
+              labelLine: { show: false },
+              emphasis: { scale: false, label: { show: true } },
               data: [
                 { value: 1, name: '在线', itemStyle: { color: '#10b981' } },
                 { value: 0, name: '离线', itemStyle: { color: '#334155' } },
@@ -687,6 +705,16 @@
         async function scenario(name) {
           // 通过父网关 HTTP API 触发控制（仅本机可达时）
           const base = 'http://192.168.30.160/api/relay';
+          const actions = {
+            lockUnlock:   { ch: 1, state: 1, title: '门锁解锁', desc: '已下发 CH1 解锁指令' },
+            lockLock:     { ch: 1, state: 0, title: '门锁上锁', desc: '已下发 CH1 上锁指令' },
+            light1On:     { ch: 2, state: 1, title: '灯1 开启',  desc: '已下发 CH2 开启指令' },
+            light1Off:    { ch: 2, state: 0, title: '灯1 关闭',  desc: '已下发 CH2 关闭指令' },
+            light2On:     { ch: 3, state: 1, title: '灯2 开启',  desc: '已下发 CH3 开启指令' },
+            light2Off:    { ch: 3, state: 0, title: '灯2 关闭',  desc: '已下发 CH3 关闭指令' },
+            acOn:         { ch: 4, state: 1, title: '空调开启',  desc: '已下发 CH4 开启指令' },
+            acOff:        { ch: 4, state: 0, title: '空调关闭',  desc: '已下发 CH4 关闭指令' }
+          };
           try {
             if (name === 'allOn') {
               for (let i = 1; i <= 4; i++) await fetch(`${base}?ch=${i}&state=1`);
@@ -694,12 +722,13 @@
             } else if (name === 'allOff') {
               for (let i = 1; i <= 4; i++) await fetch(`${base}?ch=${i}&state=0`);
               addAlert('info', '场景联动 · 全关照明', '已下发 CH1-CH4 关闭指令');
-            } else if (name === 'acOn') {
-              await fetch(`${base}?ch=4&state=1`);
-              addAlert('info', '场景联动 · 开启空调', '已下发 CH4 开启指令');
             } else if (name === 'alarmReset') {
               alerts.length = 0;
               addAlert('info', '告警复位', '已清空当前告警列表');
+            } else if (actions[name]) {
+              const a = actions[name];
+              await fetch(`${base}?ch=${a.ch}&state=${a.state}`);
+              addAlert('info', `场景联动 · ${a.title}`, a.desc);
             }
           } catch (e) { addAlert('warning', '场景联动失败', '无法连接父网关 HTTP API'); }
         }
