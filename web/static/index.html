@@ -732,10 +732,15 @@
 
         let charts = [];
 
+        // 示例告警：全部基于本项目中真实存在的子设备/网关
+        // （lock-lfx / light-lfx-1 / light-lfx-2 / ac-lfx / th-lfx / pir-lfx / smoke-lfx / relay4_lfx 父网关）
         const alerts = reactive([
-          { level: 'critical', levelLabel: '严重', title: '传感器温度 B · 温度低温', desc: '温度读数低于阈值，建议检查从站连接', time: '2026-07-29 17:13:24' },
-          { level: 'critical', levelLabel: '严重', title: '摄像头 D · 画面报警', desc: '采集画面异常，未收到心跳', time: '2026-07-29 17:13:24' },
-          { level: 'warning', levelLabel: '一般', title: '温度传感 A · 温度高温', desc: '温度读数超过上限 35℃', time: '2026-07-29 17:13:24' },
+          { level: 'critical', levelLabel: '严重', title: '烟雾感应器 smoke-001-lfx · 烟雾浓度异常', desc: '浓度读数 78，超过阈值 50，建议立即排查', time: '2026-09-11 13:31:02' },
+          { level: 'critical', levelLabel: '严重', title: '父网关 7ce8b1c1a7fc · MQTT 心跳丢失', desc: '超过 90s 未收到 hb_ack，触发链路自愈', time: '2026-09-11 13:28:45' },
+          { level: 'warning', levelLabel: '一般', title: '温湿度传感器 th-001-lfx · 温度过高', desc: '温度 38.2°C 超过上限 35°C', time: '2026-09-11 13:25:18' },
+          { level: 'warning', levelLabel: '一般', title: '灯1 light-003-lfx · 功率过载', desc: '当前功率 128W，超过额定 100W，建议检查负载', time: '2026-09-11 13:22:07' },
+          { level: 'info', levelLabel: '提示', title: '门锁 lock-002-lfx · 开锁记录', desc: '13:28:10 检测到解锁事件，通道 CH1 状态由关转开', time: '2026-09-11 13:28:10' },
+          { level: 'info', levelLabel: '提示', title: '人体感应器 pir-001-lfx · 检测到移动', desc: '13:25:33 触发 occupancy，置信度 0.82', time: '2026-09-11 13:25:33' },
         ]);
         const recentAlerts = computed(() => alerts.slice(0, 6));
 
