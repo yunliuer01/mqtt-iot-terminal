@@ -614,7 +614,11 @@
           if (product === 'smoke-lfx' && device === 'smoke-001-lfx') {
             latest.smoke = props.smoke;
             latest.alarm = props.alarm;
-            if (props.alarm || (props.smoke > 50)) addAlert('critical', '烟雾感应器 smoke-001-lfx · 烟雾浓度异常', `浓度读数 ${props.smoke}，超过阈值 50`);
+            // 烟雾报警应以平台侧 alarm 字段为准（JetLinks 上对应"报警状态"），
+            // smoke 只是 0~80 的随机演示浓度，本身不直接代表报警。
+            if (props.alarm === true) {
+              addAlert('critical', '烟雾感应器 smoke-001-lfx · 报警状态触发', `浓度读数 ${props.smoke}，报警状态为 true`);
+            }
           }
         }
 
