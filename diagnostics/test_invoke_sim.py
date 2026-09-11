@@ -18,6 +18,10 @@ import uuid
 
 import paho.mqtt.client as mqtt
 
+# --- 本脚本已从仓库根目录移入 diagnostics/，下面三行把仓库根目录加回 sys.path，
+#     以便继续 `import config`（2026-09-11 目录整理时补）---
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 import config
 
 logging.basicConfig(level=logging.INFO,

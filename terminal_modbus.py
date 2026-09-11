@@ -24,8 +24,10 @@
 import argparse
 import json
 import logging
+import sys
 import threading
 import time
+from pathlib import Path
 
 import paho.mqtt.client as mqtt
 from pymodbus.client import ModbusTcpClient
@@ -34,6 +36,14 @@ from pymodbus.exceptions import ModbusException
 import config
 from jetlinks_terminal import JetLinksReporter
 from mqtt_base import MqttReporter
+
+# Web 映射配置可选支持（需要同目录有 web/mapping_loader.py；独立运行缺它也不会崩）
+sys.path.insert(0, str(Path(__file__).parent))
+try:
+    from web.mapping_loader import load_mapping, get_modbus_sensor  # noqa: E402
+except Exception as _e:  # noqa: BLE001
+    load_mapping = None
+    get_modbus_sensor = None
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -213,7 +223,69 @@ def main():
     parser.add_argument("--port", type=int, default=None, help="覆盖 MQTT 服务器端口")
     parser.add_argument("--user", default=config.MQTT_USER, help="MQTT 用户名")
     parser.add_argument("--passwd", default=config.MQTT_PASS, help="MQTT 密码")
+    parser.add_argument("--mapping", default=None,
+                        help="从 web/static/mapping.json 加载 Modbus 传感器配置（与 --sensor-id 配合）")
+    parser.add_argument("--sensor-id", default=None,
+                        help="使用 mapping.json 中哪个 modbus_sensors[*]（默认第一个）")
+    parser.add_argument("--list", action="store_true",
+                        help="列出 mapping 中的 modbus 传感器并退出（需要 --mapping）")
     args = parser.parse_args()
+
+    # Web 映射模式：--mapping 提供时，从 mapping 读 sensor 字段，CLI 显式传的非默认值
+    # 会覆盖 mapping。优先级：CLI 命令行 > mapping > 硬编码 default。
+    sensor_cfg = None
+    if args.mapping:
+        if load_mapping is None:
+            log.error("提供了 --mapping 但无法 import web.mapping_loader，请确认当前目录有 web/ 子目录")
+            sys.exit(2)
+        try:
+            cfg = load_mapping(args.mapping)
+            sensors = cfg.get("modbus_sensors", [])
+        except Exception as e:
+            log.error("读取映射文件 %s 失败: %s", args.mapping, e)
+            sys.exit(2)
+        if args.list:
+            print("可用的 Modbus 传感器：")
+            if not sensors:
+                print("  (空)")
+            for s in sensors:
+                print("  %-20s %-30s 设备=%s 从站=%s:%s/id=%s 寄存器=%s enabled=%s"
+                      % (s.get("id", "?"), s.get("name", ""),
+                         s.get("device_id"), s.get("slave_ip"), s.get("slave_port"),
+                         s.get("slave_id"), s.get("register_addr"),
+                         s.get("enabled", True)))
+            return
+        if not sensors:
+            log.error("mapping 中没有 modbus_sensors，请先在 Web 界面创建")
+            sys.exit(2)
+        sid = args.sensor_id or sensors[0].get("id")
+        sensor_cfg = next((s for s in sensors if s.get("id") == sid), None)
+        if sensor_cfg is None:
+            log.error("找不到 sensor_id=%s（可选: %s）",
+                      sid, [s.get("id") for s in sensors])
+            sys.exit(2)
+        if not sensor_cfg.get("enabled", True):
+            log.warning("sensor %s 在 mapping 中已禁用，但仍按配置运行（你可以 Ctrl+C 退出）", sid)
+
+        # sentinel 比对：仅当 args 仍是 default 时才用 mapping 字段覆盖
+        if args.device_id == "MODBUS-TERM-01" and sensor_cfg.get("device_id"):
+            args.device_id = sensor_cfg["device_id"]
+        if args.product == "mqtt-iot" and sensor_cfg.get("product_id"):
+            args.product = sensor_cfg["product_id"]
+        if args.modbus_host == DEFAULT_MODBUS_HOST and sensor_cfg.get("slave_ip"):
+            args.modbus_host = sensor_cfg["slave_ip"]
+        if args.modbus_port == DEFAULT_MODBUS_PORT and sensor_cfg.get("slave_port") is not None:
+            args.modbus_port = int(sensor_cfg["slave_port"])
+        if args.slave_id == DEFAULT_SLAVE_ID and sensor_cfg.get("slave_id") is not None:
+            args.slave_id = int(sensor_cfg["slave_id"])
+        if args.reg == DEFAULT_REG and sensor_cfg.get("register_addr") is not None:
+            args.reg = parse_int(str(sensor_cfg["register_addr"]))
+        if args.interval == 2.0 and sensor_cfg.get("report_interval") is not None:
+            args.interval = float(sensor_cfg["report_interval"])
+        log.info("[webcfg] sensor=%s 设备=%s 产品=%s 从站=%s:%d/id=%d 寄存器=0x%04X 周期=%.1fs",
+                 sid, args.device_id, args.product,
+                 args.modbus_host, args.modbus_port, args.slave_id,
+                 args.reg, args.interval)
 
     if not (0x0000 <= args.reg <= 0x0009):
         log.warning("寄存器地址 0x%04X 超出实验平台范围 0x0000~0x0009，注意与其他小组冲突", args.reg)
