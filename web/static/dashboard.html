@@ -618,12 +618,12 @@
           }
         }
 
-        let eventSource;
         function connectLive() {
           if (!window.EventSource) {
             console.warn('浏览器不支持 EventSource');
             return;
           }
+          if (eventSource) { eventSource.close(); eventSource = null; }
           eventSource = new EventSource('/api/live');
           eventSource.onopen = () => { mqttConnected.value = true; };
           eventSource.onerror = () => { mqttConnected.value = false; };
